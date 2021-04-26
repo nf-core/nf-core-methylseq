@@ -55,15 +55,16 @@
                     "enum": [
                         "bismark",
                         "bismark_hisat",
-                        "bwameth"
+                        "bwameth",
+                        "biscuit"
                     ],
-                    "help_text": "The nf-core/methylseq package is actually two pipelines in one. The default workflow uses [Bismark](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) with [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml) as alignment tool: unless specified otherwise, nf-core/methylseq will run this pipeline.\n\nSince bismark v0.21.0 it is also possible to use [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) as alignment tool. To run this workflow, invoke the pipeline with the command line flag `--aligner bismark_hisat`. HISAT2 also supports splice-aware alignment if analysis of RNA is desired (e.g. [SLAMseq](https://science.sciencemag.org/content/360/6390/800) experiments), a file containing a list of known splicesites can be provided with `--known_splices`.\n\nThe second workflow uses [BWA-Meth](https://github.com/brentp/bwa-meth) and [MethylDackel](https://github.com/dpryan79/methyldackel) instead of Bismark. To run this workflow, run the pipeline with the command line flag `--aligner bwameth`."
+                    "help_text": "The nf-core/methylseq package is actually three pipelines in one. The default workflow uses [Bismark](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) with [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml) as alignment tool: unless specified otherwise, nf-core/methylseq will run this pipeline.\n\nSince bismark v0.21.0 it is also possible to use [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) as alignment tool. To run this workflow, invoke the pipeline with the command line flag `--aligner bismark_hisat`. HISAT2 also supports splice-aware alignment if analysis of RNA is desired (e.g. [SLAMseq](https://science.sciencemag.org/content/360/6390/800) experiments), a file containing a list of known splicesites can be provided with `--known_splices`.\n\nThe second workflow uses [BWA-Meth](https://github.com/brentp/bwa-meth) and [MethylDackel](https://github.com/dpryan79/methyldackel) instead of Bismark. To run this workflow, run the pipeline with the command line flag `--aligner bwameth`.\n\nThe third workflow uses [BISCUIT](https://github.com/huishenlab/biscuit) and [samblaster](https://github.com/GregoryFaust/samblaster) for mark duplicates instead of Bismark. To run this workflow, run the pipeline with the command line flag `--aligner biscuit`."
                 },
                 "comprehensive": {
                     "type": "boolean",
                     "description": "Output information for all cytosine contexts.",
                     "fa_icon": "fas fa-arrows-alt",
-                    "help_text": "By default, the pipeline only produces data for cytosine methylation states in CpG context. Specifying `--comprehensive` makes the pipeline give results for all cytosine contexts. Note that for large genomes (e.g. Human), these can be massive files. This is only recommended for small genomes (especially those that don't exhibit strong CpG context methylation specificity).\n\nIf specified, this flag instructs the Bismark methylation extractor to use the `--comprehensive` and `--merge_non_CpG` flags. This produces coverage files with information from about all strands and cytosine contexts merged into two files - one for CpG context and one for non-CpG context.\n\nIf using the bwa-meth workflow, the flag makes MethylDackel report CHG and CHH contexts as well."
+                    "help_text": "By default, the pipeline only produces data for cytosine methylation states in CpG context. Specifying `--comprehensive` makes the pipeline give results for all cytosine contexts. Note that for large genomes (e.g. Human), these can be massive files. This is only recommended for small genomes (especially those that don't exhibit strong CpG context methylation specificity).\n\nIf specified, this flag instructs the Bismark methylation extractor to use the `--comprehensive` and `--merge_non_CpG` flags. This produces coverage files with information from about all strands and cytosine contexts merged into two files - one for CpG context and one for non-CpG context.\n\nIf using the bwa-meth workflow, the flag makes MethylDackel report CHG and CHH contexts as well.\nIf using the biscuit workflow, the flag extract all cytosine contexts (C, CG, CG, HCG, GCH) from the VCF to the bed file, instead of only CG"
                 },
                 "save_align_intermeds": {
                     "type": "boolean",
@@ -87,7 +88,7 @@
                     "type": "boolean",
                     "fa_icon": "fas fa-outdent",
                     "description": "Preset for working with PBAT libraries.",
-                    "help_text": "Specify this parameter when working with PBAT _(Post Bisulfite Adapter Tagging)_ libraries.\n\nUsing this parameter sets the `--pbat` flag when aligning with Bismark. This tells Bismark to align complementary strands (the opposite of `--directional`).\n\nAdditionally, this is a trimming preset equivalent to `--clip_r1 6` `--clip_r2 9` `--three_prime_clip_r1 6` `--three_prime_clip_r2 9`"
+                    "help_text": "Specify this parameter when working with PBAT _(Post Bisulfite Adapter Tagging)_ libraries.\n\nUsing this parameter sets the `--pbat` flag when aligning with Bismark. This tells Bismark to align complementary strands (the opposite of `--directional`). \nWhen using the BISCUIT aligner, it reverses the reads in paired-end, or set the read to be the synthesized strand for single-end.\n\nAdditionally, this is a trimming preset equivalent to `--clip_r1 6` `--clip_r2 9` `--three_prime_clip_r1 6` `--three_prime_clip_r2 9`"
                 },
                 "rrbs": {
                     "type": "boolean",
@@ -111,7 +112,7 @@
                     "type": "boolean",
                     "fa_icon": "fas fa-cut",
                     "description": "Trimming preset for single-cell bisulfite libraries.",
-                    "help_text": "Equivalent to `--clip_r1 6` `--clip_r2 6` `--three_prime_clip_r1 6` `--three_prime_clip_r2 6`.\n\nAlso sets the `--non_directional` flag for Bismark."
+                    "help_text": "Equivalent to `--clip_r1 6` `--clip_r2 6` `--three_prime_clip_r1 6` `--three_prime_clip_r2 6`.\n\nAlso sets the `--non_directional` flag for Bismark or BISCUIT."
                 },
                 "accel": {
                     "type": "boolean",
@@ -135,7 +136,7 @@
                     "type": "boolean",
                     "fa_icon": "fas fa-cut",
                     "description": "Trimming preset for the Zymo kit.",
-                    "help_text": "Equivalent to `--clip_r1 10` `--clip_r2 15` `--three_prime_clip_r1 10` `--three_prime_clip_r2 10`.\n\nAlso sets the `--non_directional` flag for Bismark."
+                    "help_text": "Equivalent to `--clip_r1 10` `--clip_r2 15` `--three_prime_clip_r1 10` `--three_prime_clip_r2 10`.\n\nAlso sets the `--non_directional` flag for Bismark or for BISCUIT.."
                 }
             },
             "fa_icon": "fas fa-prescription-bottle"
@@ -156,7 +157,7 @@
                     "type": "string",
                     "fa_icon": "fas fa-font",
                     "description": "Path to FASTA genome file.",
-                    "help_text": "If you have no genome reference available, the pipeline can build one using a FASTA file. This requires additional time and resources, so it's better to use a pre-build index if possible. You can use the command line option `--save_reference` to keep the generated references so that they can be added to your config and used again in the future.\n\nNote that the `bwa-meth` workflow always needs a FASTA file, for methylation calling."
+                    "help_text": "If you have no genome reference available, the pipeline can build one using a FASTA file. This requires additional time and resources, so it's better to use a pre-build index if possible. You can use the command line option `--save_reference` to keep the generated references so that they can be added to your config and used again in the future.\n\nNote that FASTA file is always needed, for the Picard metrics creation."
                 },
                 "fasta_index": {
                     "type": "string",
@@ -173,6 +174,12 @@
                     "type": "string",
                     "description": "bwameth index filename base",
                     "help_text": "The base filename for a bwa-meth genome reference index. Only used when using the bwa-meth aligner.\n\nNote that this is not a complete path, but rather a common filename _base_. For example, if you have file paths such as `/path/to/ref/genome.fa.bwameth.c2t.bwt`, you should specify `/path/to/ref/genome.fa`.",
+                    "fa_icon": "far fa-dot-circle"
+                },
+                "bwa_biscuit_index": {
+                    "type": "string",
+                    "description": "biscuit-bwa index filename base",
+                    "help_text": "The base filename for a biscuit-bwa genome reference index. Only used when using the biscuit aligner.\n\nNote that this is not a complete path, but rather a common filename _base_. For example, if you have file paths such as `/path/to/ref/genome.fa.bwameth.bis.amb`, you should specify `/path/to/ref/genome.fa`.",
                     "fa_icon": "far fa-dot-circle"
                 },
                 "save_reference": {
@@ -244,12 +251,6 @@
             "default": "",
             "fa_icon": "fas fa-circle",
             "properties": {
-                "non_directional": {
-                    "type": "boolean",
-                    "description": "Run alignment against all four possible strands.",
-                    "help_text": "By default, Bismark assumes that libraries are directional and does not align against complementary strands. If your library prep was not directional, use `--non_directional` to align against all four possible strands.\n\nNote that the `--single_cell` and `--zymo` parameters both set the `--non_directional` workflow flag automatically.",
-                    "fa_icon": "fas fa-exchange-alt"
-                },
                 "cytosine_report": {
                     "type": "boolean",
                     "description": "Output stranded cytosine report during Bismark's bismark_methylation_extractor step.",
@@ -324,15 +325,9 @@
         "bwa_meth_options": {
             "title": "bwa-meth options",
             "type": "object",
-            "description": "",
+            "description": "Parameters specific to the bwa-meth workflow",
             "default": "",
             "properties": {
-                "min_depth": {
-                    "type": "integer",
-                    "description": "Specify a minimum read coverage for MethylDackel to report a methylation call.",
-                    "default": 0,
-                    "fa_icon": "fas fa-angle-double-down"
-                },
                 "ignore_flags": {
                     "type": "boolean",
                     "description": "MethylDackel - ignore SAM flags",
@@ -345,6 +340,86 @@
                     "help_text": "Run MethylDackel with the `--methyl_kit` option, to produce files suitable for use with the methylKit R package.",
                     "fa_icon": "fas fa-ellipsis-h"
                 }
+            },
+            "fa_icon": "far fa-circle"
+        },
+        "biscuit_options": {
+            "title": "biscuit options",
+            "type": "object",
+            "description": "Parameters specific to the BISCUIT workflow",
+            "default": "",
+            "properties": {
+                "epiread": {
+                    "type": "boolean",
+                    "description": "Specify a minimum read coverage for MethylDackel to report a methylation call.",
+                    "help_text": "[Epiread](https://huishenlab.github.io/biscuit/epiread_format/) is a compact way of storing CpG retention pattern on the same read. This option will tell the biscuit workflow to generate Epi-read file for the sample, as well as all needed steps.",
+                    "fa_icon": "fas fa-clipboard-list"
+                },
+                "common_dbsnp": {
+                    "type": "string",
+                    "description": "Common dbSNP table of the relevant genome, for SNP filteration",
+                    "help_text": "Common-dbSNP table that contains at least the following fields: chrom, chromStart, chromEnd, name, ref, altCount, alts, shiftBases, freqSourceCount, minorAlleleFreq, majorAllele, minorAllele, maxFuncImpact, class, ucscNotes [can be downloaded from UCSC]. This table is used for SNP filteration in the Epi-read file. Relevant only if `--epiread` is set.",
+                    "fa_icon": "fas fa-chess-board"
+                },
+                "whitelist": {
+                    "type": "string",
+                    "description": "Path to the file that is the complement of blacklist.",
+                    "help_text": "The whitelist is needed for SNP file generation.\nThe whitelist will be created automatically if a blacklist is probided with `--blacklist`\nRelevant only if `--epiread` is set.",
+                    "fa_icon": "far fa-list-alt"
+                },
+				"blacklist": {
+                    "type": "string",
+                    "description": "Path to the file with problematic regions of the genome, known as blacklist.",
+                    "help_text": "The whitelist is needed for white list creation, which is needed for SNP file generation.\nRelevant only if `--epiread` is set.",
+                    "fa_icon": "fas fa-list-alt"
+                },
+                "debug_epiread": {
+                    "type": "boolean",
+                    "description": "Debug epiread merging for paired end reads.",
+                    "fa_icon": "fas fa-check-square",
+                    "help_text": "By default, merging two adjacent rows of the read mates in Epi-read format when running with paired-end mode will not output the debug data (about the reference allele, the alternative allele and the SP data), and the original Epi-read file will not be saved to the results directory. Specify this flag (or set to true in your config file) to run the merging with debug data and copy the original Epi-read file to the results directory when complete. \n If you don't want to keep the original files, check `debug_epiread_merging`.\nRelevant only if `--epiread` is set.",
+                    "hidden": true
+                },
+                "debug_epiread_merging": {
+                    "type": "boolean",
+                    "description": "Debug epiread merging. Output merged epiread in debug mode.",
+                    "fa_icon": "far fa-check-square",					
+                    "help_text": "By default, merging two adjacent rows of the read mates in Epi-read format when running with paired-end mode will not output the debug data  (about the reference allele, the alternative allele and the SP data). Specify this flag (or set to true in your config file) to run the merging with the debug data.\nIf you want to keep the original Epi-read files, check `debug_epiread`\nRelevant only if `--epiread` is set.",
+                    "hidden": true
+                },
+                "assets_dir": {
+                    "type": "string",
+                    "description": "Path to assets directory for biscuit_QC",
+                    "help_text": "Path to a directory containing needed file for biscuit-QC step\n> **NB** If none provided, will be generated automatically.",
+                    "fa_icon": "fab fa-buffer"
+                },
+                "save_snp_file": {
+                    "type": "boolean",
+                    "description": "Save SNP bed-file to results directory",
+                    "help_text": "By default, the bed file with SNP information about the sample will not be save to the results directory. Specify this flag (or set to true in your config file) to copy these files to the results directory when complete. Relevant only if `--epiread` is set.",
+                    "fa_icon": "fas fa-save"
+                }
+            },
+            "fa_icon": "far fa-circle"
+        },
+		"common_options": {
+            "title": "common options",
+            "type": "object",
+            "description": "Parameters that are common between pipelines",
+            "default": "",
+            "properties": {
+				"min_depth": {
+                    "type": "integer",
+                    "description": "Specify a minimum read coverage for MethylDackel to report a methylation call in bwa-meth workflow, or a minimum read coverage for information extraction from the VCF file to bed file in BISCUIT workflow.",
+                    "default": 0,
+                    "fa_icon": "fas fa-angle-double-down"
+                },
+				"non_directional": {
+                    "type": "boolean",
+                    "description": "Run alignment against all four possible strands.",
+                    "help_text": "By default, Bismark and BISCUIT assume that libraries are directional and does not align against complementary strands. If your library prep was not directional, use `--non_directional` to align against all four possible strands.\n\nNote that the `--single_cell` and `--zymo` parameters both set the `--non_directional` workflow flag automatically.",
+                    "fa_icon": "fas fa-exchange-alt"
+                }         
             },
             "fa_icon": "far fa-circle"
         },
@@ -568,6 +643,12 @@
         },
         {
             "$ref": "#/definitions/bwa_meth_options"
+        },
+		{
+            "$ref": "#/definitions/biscuit_options"
+        },
+		{
+            "$ref": "#/definitions/common_options"
         },
         {
             "$ref": "#/definitions/skip_pipeline_steps"

@@ -50,29 +50,29 @@ ch_splicesites_for_bismark_hisat_align = params.known_splices ? Channel.fromPath
 if( params.aligner =~ /bismark/ ){
     params.bismark_index = params.genome && params.aligner == 'bismark' ? params.genomes[ params.genome ].bismark ?: false : false
     assert params.bismark_index || params.fasta : "No reference genome index or fasta file specified"
-    ch_wherearemyfiles_for_alignment.set { ch_wherearemyfiles_for_bismark_align }
+    ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bismark_align; ch_wherearemyfiles_for_bismark_samtools_sort; ch_wherearemyfiles_for_bismark_dedup_samtools_sort }
+    Channel
+        .fromPath(params.fasta, checkIfExists: true)
+        .ifEmpty { exit 1, "fasta file not found : ${params.fasta}" }
+        .into { ch_fasta_for_makeBismarkIndex; ch_fasta_for_picard }
 
     if( params.bismark_index ){
         Channel
             .fromPath(params.bismark_index, checkIfExists: true)
             .ifEmpty { exit 1, "Bismark index file not found: ${params.bismark_index}" }
             .into { ch_bismark_index_for_bismark_align; ch_bismark_index_for_bismark_methXtract }
+        ch_fasta_for_makeBismarkIndex.close()
     }
-    else if( params.fasta ){
-        Channel
-            .fromPath(params.fasta, checkIfExists: true)
-            .ifEmpty { exit 1, "fasta file not found : ${params.fasta}" }
-            .set { ch_fasta_for_makeBismarkIndex }
-    }
+
 }
-else if( params.aligner == 'bwameth' ){
-    assert params.fasta : "No Fasta reference specified! This is required by MethylDackel."
-    ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bwamem_align; ch_wherearemyfiles_for_samtools_sort_index_flagstat }
+else if( params.aligner == 'bwameth' || params.aligner == 'biscuit'){
+    assert params.fasta : "No Fasta reference specified!"
+    ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bwamem_align; ch_wherearemyfiles_for_biscuit_align; ch_wherearemyfiles_for_samtools_sort_index_flagstat; ch_wherearemyfiles_for_samblaster }
 
     Channel
         .fromPath(params.fasta, checkIfExists: true)
         .ifEmpty { exit 1, "fasta file not found : ${params.fasta}" }
-        .into { ch_fasta_for_makeBwaMemIndex; ch_fasta_for_makeFastaIndex; ch_fasta_for_methyldackel }
+        .into { ch_fasta_for_makeBwaMemIndex; ch_fasta_for_makeFastaIndex; ch_fasta_for_build_biscuit_QC_assets; ch_fasta_for_methyldackel; ch_fasta_for_pileup; ch_fasta_for_epiread; ch_fasta_for_biscuitQC; ch_fasta_for_picard}
 
     params.bwa_meth_index = params.genome ? params.genomes[ params.genome ].bwa_meth ?: false : false
     if( params.bwa_meth_index ){
@@ -83,14 +83,30 @@ else if( params.aligner == 'bwameth' ){
         ch_fasta_for_makeBwaMemIndex.close()
     }
 
+     if( params.bwa_biscuit_index ){
+        Channel
+            .fromPath("${params.bwa_biscuit_index}*", checkIfExists: true)
+            .ifEmpty { exit 1, "bwa (biscuit) index file(s) not found: ${params.bwa_biscuit_index}" }
+            .set { ch_bwa_index_for_biscuit  }
+        ch_fasta_for_makeBwaMemIndex.close()
+    }
+
     params.fasta_index = params.genome ? params.genomes[ params.genome ].fasta_index ?: false : false
     if( params.fasta_index ){
         Channel
             .fromPath(params.fasta_index, checkIfExists: true)
             .ifEmpty { exit 1, "fasta index file not found: ${params.fasta_index}" }
-            .set { ch_fasta_index_for_methyldackel }
+            .into { ch_fasta_index_for_methyldackel; ch_fasta_index_for_biscuitQC; ch_fasta_index_for_create_VCF; ch_fasta_for_create_whitelist; ch_fasta_index_for_epiread }
         ch_fasta_for_makeFastaIndex.close()
     }
+  }
+
+if( params.aligner == 'biscuit' && params.assets_dir ) {
+    Channel
+        .fromPath("${params.assets_dir}", checkIfExists: true)
+        .ifEmpty { exit 1, "Assets directory for biscuit QC not found: ${params.assets_dir}" }
+        .into { ch_assets_dir_for_biscuit_qc; ch_assets_dir_with_cpg_for_epiread }
+    ch_fasta_for_build_biscuit_QC_assets.close()
 }
 
 // Trimming / kit presets
@@ -165,6 +181,7 @@ if (params.input_paths) {
             .map { row -> [ row[0], [ file(row[1][0], checkIfExists: true) ] ] }
             .ifEmpty { exit 1, 'params.input_paths was empty - no input files supplied' }
             .into { ch_read_files_fastqc; ch_read_files_trimming }
+
     } else {
         Channel
             .from(params.input_paths)
@@ -174,11 +191,39 @@ if (params.input_paths) {
     }
 } else {
     Channel
-        .fromFilePairs(params.input, size: params.single_end ? 1 : 2)
+        .fromFilePairs( params.input, size: params.single_end ? 1 : 2 )
         .ifEmpty { exit 1, "Cannot find any reads matching: ${params.input}\nNB: Path needs to be enclosed in quotes!\nIf this is single-end data, please specify --single_end on the command line." }
         .into { ch_read_files_fastqc; ch_read_files_trimming }
 }
 
+if (params.aligner == 'biscuit') {
+	if (params.epiread) {
+		assert params.blacklist || params.whitelist : "Cannot find any blacklist/whitelist file matching: ${params.whitelist}\nEither  whitelist or blacklist are needed if \'--epiread\' is specified"
+
+		if (params.whitelist) {
+			Channel
+                .fromPath(params.whitelist, checkIfExists: true)
+                .ifEmpty { exit 1, "Cannot find any whitelist file matching: ${params.whitelist}" }
+                .into { ch_whitelist_for_SNP; ch_whitelist_for_epiread }
+		}
+		else {
+			Channel
+                .fromPath(params.blacklist, checkIfExists: true)
+                .ifEmpty { exit 1, "Cannot find any blacklist file matching: ${params.blacklist}" }
+                .set { ch_blacklist_for_create_whitelist }
+		}
+
+		if (params.common_dbsnp) {
+			Channel
+                .fromPath(params.common_dbsnp, checkIfExists: true)
+                .ifEmpty { exit 1, "Cannot find any dbSNP file matching: ${params.common_dbsnp}\n" }
+                .set { ch_commonSNP_for_SNP }
+		}
+
+	} else {
+		ch_fasta_for_create_whitelist.close()
+	}
+}
 ////////////////////////////////////////////////////
 /* --         PRINT PARAMETER SUMMARY          -- */
 ////////////////////////////////////////////////////
@@ -197,6 +242,7 @@ if(params.local_alignment)  summary['Local alignment'] = 'Yes'
 if(params.genome)           summary['Genome']    = params.genome
 if(params.bismark_index)    summary['Bismark Index'] = params.bismark_index
 if(params.bwa_meth_index)   summary['BWA-Meth Index'] = "${params.bwa_meth_index}*"
+if(params.bwa_biscuit_index)summary['BWA Index'] = "${params.bwa_biscuit_index}*"
 if(params.fasta)            summary['Fasta Ref'] = params.fasta
 if(params.fasta_index)      summary['Fasta Index'] = params.fasta_index
 if(params.rrbs)             summary['RRBS Mode'] = 'On'
@@ -222,28 +268,34 @@ if(params.save_reference)   save_intermeds.add('Reference genome build')
 if(params.save_trimmed)     save_intermeds.add('Trimmed FastQ files')
 if(params.unmapped)         save_intermeds.add('Unmapped reads')
 if(params.save_align_intermeds) save_intermeds.add('Intermediate BAM files')
+if(params.save_snp_file)    save_intermeds.add('SNP bed-files')
 if(save_intermeds.size() > 0) summary['Save Intermediates'] = save_intermeds.join(', ')
+debug_mode = [];
+if(params.debug_epiread)    debug_mode.add('Debug epiread step')
+if(params.debug_epiread_merging) debug_mode.add('Debug epiread merging')
+if(debug_mode.size() > 0)   summary['Debug mode'] = debug_mode.join(', ')
 if(params.minins)           summary['Bismark min insert size'] = bismark_minins
 if(params.maxins || params.em_seq) summary['Bismark max insert size'] = bismark_maxins
 if(params.bismark_align_cpu_per_multicore) summary['Bismark align CPUs per --multicore'] = params.bismark_align_cpu_per_multicore
 if(params.bismark_align_mem_per_multicore) summary['Bismark align memory per --multicore'] = params.bismark_align_mem_per_multicore
-summary['Output dir']       = params.outdir
-summary['Launch dir']       = workflow.launchDir
-summary['Working dir']      = workflow.workDir
-summary['Pipeline dir']     = workflow.projectDir
-summary['User']             = workflow.userName
-summary['Config Profile']   = workflow.profile
+if(params.assets_dir)        summary['Assets Directory'] = params.assets_dir
+if(params.whitelist)         summary['Whitelist'] = params.whitelist
+if(params.blacklist)         summary['Blacklist'] = params.whitelist
+if(params.common_dbsnp)      summary['Common SNP'] = params.common_dbsnp
+if(params.epiread)           summary['Epiread'] = 'Yes'
+summary['Output dir']        = params.outdir
+summary['Launch dir']        = workflow.launchDir
+summary['Working dir']       = workflow.workDir
+summary['Pipeline dir']      = workflow.projectDir
+summary['User']              = workflow.userName
+summary['Config Profile']    = workflow.profile
 if (workflow.containerEngine) summary['Container'] = "$workflow.containerEngine - $workflow.container"
 if (workflow.profile.contains('awsbatch')) {
-    summary['AWS Region']   = params.awsregion
-    summary['AWS Queue']    = params.awsqueue
-    summary['AWS CLI']      = params.awscli
+    summary['AWS Region']    = params.awsregion
+    summary['AWS Queue']     = params.awsqueue
+    summary['AWS CLI']       = params.awscli
 }
 summary['Max Resources']    = "$params.max_memory memory, $params.max_cpus cpus, $params.max_time time per job"
-summary['Config Profile'] = workflow.profile
-if (params.config_profile_description) summary['Config Profile Description'] = params.config_profile_description
-if (params.config_profile_contact)     summary['Config Profile Contact']     = params.config_profile_contact
-if (params.config_profile_url)         summary['Config Profile URL']         = params.config_profile_url
 summary['Config Files'] = workflow.configFiles.join(', ')
 if (params.email || params.email_on_fail) {
     summary['E-mail Address']    = params.email
@@ -308,10 +360,19 @@ process get_software_versions {
     bwa &> v_bwa.txt 2>&1 || true
     bwameth.py --version &> v_bwameth.txt
     picard MarkDuplicates --version &> v_picard_markdups.txt 2>&1 || true
+    picard CreateSequenceDictionary --version &> v_picard_createseqdict.txt 2>&1 || true
+    picard CollectInsertSizeMetrics --version &> v_picard_collectinssize.txt 2>&1 || true
+    picard CollectGcBiasMetrics --version &> v_picard_collectgcbias.txt 2>&1 || true
     MethylDackel --version &> v_methyldackel.txt
     qualimap --version &> v_qualimap.txt || true
     preseq &> v_preseq.txt
     multiqc --version &> v_multiqc.txt
+    samblaster --version &> v_samblaster.txt
+    biscuit &>v_biscuit.txt 2>&1 || true
+    bcftools --version &> v_bcftools.txt
+    bedtools --version &> v_bedtools.txt
+    parallel --version &> v_parallel.txt
+    gawk --version > v_gawk.txt
     scrape_software_versions.py &> software_versions_mqc.yaml
     """
 }
@@ -323,7 +384,6 @@ if( !params.bismark_index && params.aligner =~ /bismark/ ){
     process makeBismarkIndex {
         publishDir path: { params.save_reference ? "${params.outdir}/reference_genome" : params.outdir },
                    saveAs: { params.save_reference ? it : null }, mode: params.publish_dir_mode
-
         input:
         file fasta from ch_fasta_for_makeBismarkIndex
 
@@ -364,9 +424,33 @@ if( !params.bwa_meth_index && params.aligner == 'bwameth' ){
 }
 
 /*
+ * PREPROCESSING - Build bwa-biscuit
+ */
+if(!params.bwa_biscuit_index && params.aligner == 'biscuit' ){
+    process makeBwaBISCUITIndex {
+        tag "$fasta"
+        publishDir path: "${params.outdir}/reference_genome", saveAs: { params.save_reference ? it : null }, mode: params.publish_dir_mode
+
+        input:
+        file fasta from ch_fasta_for_makeBwaMemIndex
+
+        output:
+        file "${fasta}*" into ch_bwa_index_for_biscuit
+
+        script:
+        """
+        mkdir BiscuitIndex
+        cp $fasta BiscuitIndex/
+        biscuit index $fasta
+        cp ${fasta}* BiscuitIndex
+        """
+    }
+}
+
+/*
  * PREPROCESSING - Index Fasta file
  */
-if( !params.fasta_index && params.aligner == 'bwameth' ){
+if( !params.fasta_index && params.aligner == 'bwameth' ||  !params.fasta_index && params.aligner == 'biscuit' ){
     process makeFastaIndex {
         tag "$fasta"
         publishDir path: "${params.outdir}/reference_genome", saveAs: { params.save_reference ? it : null }, mode: params.publish_dir_mode
@@ -375,11 +459,35 @@ if( !params.fasta_index && params.aligner == 'bwameth' ){
         file fasta from ch_fasta_for_makeFastaIndex
 
         output:
-        file "${fasta}.fai" into ch_fasta_index_for_methyldackel
+        file "${fasta}.fai" into ch_fasta_index_for_methyldackel,ch_fasta_index_for_biscuitQC,ch_fasta_index_for_create_VCF,ch_fasta_for_create_whitelist,ch_fasta_index_for_epiread
 
         script:
         """
         samtools faidx $fasta
+        """
+    }
+}
+
+/*
+ * PREPROCESSING - Build Biscuit QC assets
+ */
+if( !params.assets_dir &&  params.aligner == 'biscuit' ) {
+    process build_biscuit_QC_assets {
+        tag "$fasta"
+        publishDir path: "${params.outdir}/reference_assets", saveAs: { params.save_reference ? it : null }, mode: params.publish_dir_mode
+
+        input:
+        file fasta from ch_fasta_for_build_biscuit_QC_assets
+
+        output:
+        file "*assets" into ch_assets_dir_for_biscuit_qc, ch_assets_dir_with_cpg_for_epiread
+
+
+        script:
+        assembly = fasta.toString().replaceAll(/\.\w+/,"")
+
+        """
+        build_biscuit_QC_assets.pl -r $fasta -o ${assembly}_assets
         """
     }
 }
@@ -485,7 +593,7 @@ if( params.aligner =~ /bismark/ ){
         file knownsplices from ch_splicesites_for_bismark_hisat_align.collect().ifEmpty([])
 
         output:
-        set val(name), file("*.bam") into ch_bam_for_bismark_deduplicate, ch_bam_for_bismark_summary, ch_bam_for_preseq
+        set val(name), file("*.bam") into ch_bam_for_bismark_deduplicate, ch_bam_for_bismark_summary, ch_bam_for_samtools_sort_index_flagstat
         set val(name), file("*report.txt") into ch_bismark_align_log_for_bismark_report, ch_bismark_align_log_for_bismark_summary, ch_bismark_align_log_for_multiqc
         file "*.fq.gz" optional true
         file "where_are_my_files.txt"
@@ -499,6 +607,7 @@ if( params.aligner =~ /bismark/ ){
 
         // Optional extra bismark parameters
         splicesites = params.aligner == "bismark_hisat" && params.known_splices ? "--known-splicesite-infile <(hisat2_extract_splice_sites.py ${knownsplices})" : ''
+
         pbat = params.pbat ? "--pbat" : ''
         non_directional = params.single_cell || params.zymo || params.non_directional ? "--non_directional" : ''
         unmapped = params.unmapped ? "--unmapped" : ''
@@ -553,10 +662,42 @@ if( params.aligner =~ /bismark/ ){
     }
 
     /*
-     * STEP 4 - Bismark deduplicate
+     * STEP 4 - Samtools sort bismark
+     */
+    process samtools_sort_index_flagstat_bismark {
+        tag "$name"
+        publishDir "${params.outdir}/samtools", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if(filename.indexOf("report.txt") > 0) "logs/$filename"
+                else if( (!params.save_align_intermeds && !params.skip_deduplication && !params.rrbs).every() && filename == "where_are_my_files.txt") filename
+                else if( (params.save_align_intermeds || params.skip_deduplication || params.rrbs).any() && filename != "where_are_my_files.txt") filename
+                else null
+            }
+
+        input:
+        set val(name), file(bam) from ch_bam_for_samtools_sort_index_flagstat
+        file wherearemyfiles from ch_wherearemyfiles_for_bismark_samtools_sort.collect()
+
+        output:
+        set val(name), file("*.sorted.bam") into  ch_bam_for_preseq,ch_bam_sorted_for_picard
+        file "where_are_my_files.txt"
+
+        script:
+        def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
+        def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
+        """
+        samtools sort $bam \\
+            -@ ${task.cpus} $sort_mem \\
+            -o ${bam.baseName}.sorted.bam
+        """
+    }
+
+
+    /*
+     * STEP 5 - Bismark deduplicate
      */
     if( params.skip_deduplication || params.rrbs ) {
-        ch_bam_for_bismark_deduplicate.into { ch_bam_dedup_for_bismark_methXtract; ch_bam_dedup_for_qualimap }
+        ch_bam_for_bismark_deduplicate.into { ch_bam_dedup_for_bismark_methXtract; ch_dedup_bam_for_samtools_sort_index_flagstat  }
         ch_bismark_dedup_log_for_bismark_report = Channel.from(false)
         ch_bismark_dedup_log_for_bismark_summary = Channel.from(false)
         ch_bismark_dedup_log_for_multiqc  = Channel.from(false)
@@ -570,7 +711,7 @@ if( params.aligner =~ /bismark/ ){
             set val(name), file(bam) from ch_bam_for_bismark_deduplicate
 
             output:
-            set val(name), file("*.deduplicated.bam") into ch_bam_dedup_for_bismark_methXtract, ch_bam_dedup_for_qualimap
+            set val(name), file("*.deduplicated.bam") into ch_bam_dedup_for_bismark_methXtract, ch_dedup_bam_for_samtools_sort_index_flagstat
             set val(name), file("*.deduplication_report.txt") into ch_bismark_dedup_log_for_bismark_report, ch_bismark_dedup_log_for_bismark_summary, ch_bismark_dedup_log_for_multiqc
 
             script:
@@ -579,6 +720,37 @@ if( params.aligner =~ /bismark/ ){
             deduplicate_bismark $fq_type --bam $bam
             """
         }
+    }
+
+    /*
+     * STEP 6 - Samtools sort bismark after dedup
+     */
+    process samtools_sort_index_flagstat_dedup_bismark {
+        tag "$name"
+        publishDir "${params.outdir}/samtools", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if(filename.indexOf("report.txt") > 0) "logs/$filename"
+                else if( (!params.save_align_intermeds && !params.skip_deduplication && !params.rrbs).every() && filename == "where_are_my_files.txt") filename
+                else if( (params.save_align_intermeds || params.skip_deduplication || params.rrbs).any() && filename != "where_are_my_files.txt") filename
+                else null
+            }
+
+        input:
+        set val(name), file(bam) from ch_dedup_bam_for_samtools_sort_index_flagstat
+        file wherearemyfiles from ch_wherearemyfiles_for_bismark_dedup_samtools_sort.collect()
+
+        output:
+        set val(name), file("*.sorted.bam") into ch_bam_sorted_dedup_for_qualimap
+        file "where_are_my_files.txt"
+
+        script:
+        def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
+        def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
+        """
+        samtools sort $bam \\
+            -@ ${task.cpus} $sort_mem \\
+            -o ${bam.baseName}.sorted.bam
+        """
     }
 
     /*
@@ -712,6 +884,7 @@ else {
     ch_bismark_mbias_for_multiqc = Channel.from(false)
     ch_bismark_reports_results_for_multiqc = Channel.from(false)
     ch_bismark_summary_results_for_multiqc = Channel.from(false)
+
 }
 
 
@@ -734,7 +907,7 @@ if( params.aligner == 'bwameth' ){
         file wherearemyfiles from ch_wherearemyfiles_for_bwamem_align.collect()
 
         output:
-        set val(name), file('*.bam') into ch_bam_for_samtools_sort_index_flagstat, ch_bam_for_preseq
+        set val(name), file('*.bam') into ch_bam_for_samtools_sort_index_flagstat
         file "where_are_my_files.txt"
 
         script:
@@ -767,7 +940,7 @@ if( params.aligner == 'bwameth' ){
         file wherearemyfiles from ch_wherearemyfiles_for_samtools_sort_index_flagstat.collect()
 
         output:
-        set val(name), file("${bam.baseName}.sorted.bam") into ch_bam_sorted_for_markDuplicates
+        set val(name), file("${bam.baseName}.sorted.bam") into ch_bam_sorted_for_markDuplicates,ch_bam_for_preseq, ch_bam_sorted_for_picard
         set val(name), file("${bam.baseName}.sorted.bam.bai") into ch_bam_index
         file "${bam.baseName}_flagstat_report.txt" into ch_flagstat_results_for_multiqc
         file "${bam.baseName}_stats_report.txt" into ch_samtools_stats_results_for_multiqc
@@ -790,7 +963,7 @@ if( params.aligner == 'bwameth' ){
      * STEP 5 - Mark duplicates
      */
     if( params.skip_deduplication || params.rrbs ) {
-        ch_bam_sorted_for_markDuplicates.into { ch_bam_dedup_for_methyldackel; ch_bam_dedup_for_qualimap }
+        ch_bam_sorted_for_markDuplicates.into { ch_bam_dedup_for_methyldackel; ch_bam_sorted_dedup_for_qualimap }
         ch_bam_index.set { ch_bam_index_for_methyldackel }
         ch_markDups_results_for_multiqc = Channel.from(false)
     } else {
@@ -803,7 +976,7 @@ if( params.aligner == 'bwameth' ){
             set val(name), file(bam) from ch_bam_sorted_for_markDuplicates
 
             output:
-            set val(name), file("${bam.baseName}.markDups.bam") into ch_bam_dedup_for_methyldackel, ch_bam_dedup_for_qualimap
+            set val(name), file("${bam.baseName}.markDups.bam") into ch_bam_dedup_for_methyldackel, ch_bam_sorted_dedup_for_qualimap
             set val(name), file("${bam.baseName}.markDups.bam.bai") into ch_bam_index_for_methyldackel //ToDo check if this correctly overrides the original channel
             file "${bam.baseName}.markDups_metrics.txt" into ch_markDups_results_for_multiqc
 
@@ -829,7 +1002,7 @@ if( params.aligner == 'bwameth' ){
     }
 
     /*
-     * STEP 6 - extract methylation with MethylDackel
+     * STEP 6 - Extract methylation with MethylDackel
      */
 
     process methyldackel {
@@ -867,18 +1040,373 @@ else {
     ch_samtools_stats_results_for_multiqc = Channel.from(false)
     ch_markDups_results_for_multiqc = Channel.from(false)
     ch_methyldackel_results_for_multiqc = Channel.from(false)
+
 }
 
 
 /*
- * STEP 8 - Qualimap
+ * Process with BISCUIT and assorted tools (samblaster)
+ */
+if( params.aligner == 'biscuit' ){
+    process biscuit_align {
+        tag "$name"
+        publishDir "${params.outdir}/biscuit_alignments", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if( !params.save_align_intermeds && filename == "where_are_my_files.txt" ) filename
+                else if( params.save_align_intermeds && filename != "where_are_my_files.txt" ) filename
+                else null
+            }
+
+        input:
+        set val(name), file(reads) from ch_trimmed_reads_for_alignment
+        file bwa_indices from ch_bwa_index_for_biscuit.collect()
+        file wherearemyfiles from ch_wherearemyfiles_for_biscuit_align.collect()
+
+        output:
+        set val(name), file('*.bam') into ch_bam_for_markDuplicates, ch_bam_for_samtools_sort_index_flagstat
+        file "where_are_my_files.txt"
+
+        script:
+        fasta = bwa_indices[0].toString() - '.bwameth' - '.c2t' - '.amb' - '.ann' - '.bwt' - '.pac' - '.sa' - '.fai'  - '.par' - '.dau' -'.bis'
+        assembly = fasta.replaceAll(/\.\w+/,"")
+        prefix = reads[0].toString() - ~/(_R1)?(_trimmed)?(_val_1)?(\.fq)?(\.fastq)?(\.gz)?(\.bz2)?$/
+
+        non_directional = params.single_cell || params.zymo || params.non_directional ? 0 : 1
+        // Paired-end or single-end input files and pbat or not
+        input = params.pbat ? params.single_end ? reads + " -b 3" : "${reads[1]} ${reads[0]} -b " + non_directional : reads.toString() +"  -b " +  non_directional
+
+        """
+        biscuit align -M -t ${task.cpus} $fasta $input | samtools view -Sb > ${name}.${assembly}.bam
+        """
+    }
+
+    /*
+    * STEP 4 - Mark duplicates
+    */
+    if( params.skip_deduplication || params.rrbs ) {
+        ch_bam_for_markDuplicates.into { ch_samblaster_for_samtools_sort_index_flagstat }
+        ch_samblaster_for_multiqc = Channel.from(false)
+    } else {
+        process markDuplicates_samblaster {
+            tag "$name"
+
+            publishDir "${params.outdir}", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if( filename.indexOf("log") > 0 ) "biscuit_markDuplicates/$filename"
+                else null
+            }
+
+            input:
+            set val(name), file(bam) from ch_bam_for_markDuplicates
+            file wherearemyfiles from ch_wherearemyfiles_for_samblaster.collect()
+
+            output:
+            set val(name), file("${bam.baseName}.samblaster.bam") into ch_samblaster_for_samtools_sort_index_flagstat
+            file "*log" into ch_samblaster_for_multiqc
+
+            script:
+            def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
+            def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
+            unmapped = params.single_end ? '--ignoreUnmated' : ''
+
+            """
+            samtools sort -n $bam \\
+				-@ ${task.cpus} $sort_mem | \\
+					samtools view -h | \\
+						samblaster -M $unmapped \\
+						-d "${bam.baseName}_discordant.sam" \\
+						-s "${bam.baseName}_split.sam" \\
+						-u "${bam.baseName}_.fastq" \\
+						--excludeDups --addMateTags | \\
+							samtools view -Sb > ${bam.baseName}.samblaster.bam
+            cp .command.log ${bam.baseName}.log
+            """
+          }
+        }
+
+    /*
+     * STEP 5.- Samtools flagstat on samples
+     */
+    process samtools_sort_index_flagstat_biscuit {
+        tag "$name"
+        publishDir "${params.outdir}", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if(filename.indexOf("report.txt") > 0) "biscuit_alignments/logs/$filename"
+                else if( (params.save_align_intermeds || params.skip_deduplication  || params.rrbs).any() && filename.indexOf("sorted.bam") > 0) "biscuit_alignments/$filename"
+                else if( (!params.save_align_intermeds && !params.rrbs).every() && filename == "where_are_my_files.txt") filename
+                else if( (params.save_align_intermeds || params.skip_deduplication  || params.rrbs).any() && filename != "where_are_my_files.txt") filename
+                else null
+            }
+
+        input:
+        set val(name), file(samblaster_bam) from ch_samblaster_for_samtools_sort_index_flagstat
+        file wherearemyfiles from ch_wherearemyfiles_for_samtools_sort_index_flagstat.collect()
+
+        output:
+        set val(name), file("*.sorted.bam") into ch_bam_sorted_dedup_for_qualimap,ch_bam_for_preseq,ch_bam_sorted_for_pileup, ch_bam_sorted_for_epiread, ch_bam_noDups_for_QC,ch_bam_sorted_for_picard
+        set val(name), file ("*.sorted.bam.bai") into ch_bam_index_sorted_for_pileup,ch_bam_index_for_epiread,ch_bam_index_noDups_for_QC
+        file "${samblaster_bam.baseName}_flagstat_report.txt" into ch_flagstat_results_biscuit_for_multiqc
+        file "${samblaster_bam.baseName}_stats_report.txt" into ch_samtools_stats_results_biscuit_for_multiqc
+        file "where_are_my_files.txt"
+
+
+        script:
+        def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
+        def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
+        """
+        samtools sort $samblaster_bam \\
+            -@ ${task.cpus} $sort_mem -l 9 \\
+            -o ${samblaster_bam.baseName}.sorted.bam
+        samtools index ${samblaster_bam.baseName}.sorted.bam
+        samtools flagstat ${samblaster_bam.baseName}.sorted.bam > ${samblaster_bam.baseName}_flagstat_report.txt
+        samtools stats ${samblaster_bam.baseName}.sorted.bam > ${samblaster_bam.baseName}_stats_report.txt
+        """
+    }
+
+
+    /*
+     * STEP 6 - Create vcf file with pileup, to extract methylation
+     */
+    process create_VCF {
+        tag "$name"
+        publishDir "${params.outdir}/methylation_extract", mode: params.publish_dir_mode,
+        saveAs: {filename ->
+            if( !params.save_align_intermeds && filename == "where_are_my_files.txt") filename
+            else if( filename.indexOf("vcf.gz") > 0 && params.save_align_intermeds && filename != "where_are_my_files.txt") filename
+            else null
+        }
+
+        input:
+        set val(name), file(bam), file (bam_index) from ch_bam_sorted_for_pileup.join(ch_bam_index_sorted_for_pileup)
+        file fasta from ch_fasta_for_pileup.collect()
+        file fasta_index from ch_fasta_index_for_create_VCF.collect()
+
+        output:
+        set val(name), file("${name}.vcf.gz*") into ch_vcf_biscuit_qc ,ch_vcf_for_bedgraph,ch_vcf_for_epiread
+
+        script:
+        filter_duplication = params.skip_deduplication || params.rrbs ? '-u' : ''
+        """
+        biscuit pileup  -q ${task.cpus} $filter_duplication $fasta ${bam} -o ${name}.vcf
+        bgzip -@ ${task.cpus} -f ${name}.vcf
+        tabix -f -p vcf ${name}.vcf.gz
+        """
+    }
+
+    /*
+     * STEP 7 - Create bedgraph file from vcf
+     */
+    process create_Bedgraph {
+        tag "$name"
+        publishDir "${params.outdir}/methylation_extract", mode: params.publish_dir_mode
+
+        input:
+        set val(name), file(vcf) from ch_vcf_for_bedgraph
+
+        output:
+        set val(name), file("*bedgraph" ) into ch_bedgraph_for_intersect_soloWCGW
+
+        script:
+        min_depth = params.min_depth > 1 ? "${params.min_depth}" : '1'
+        all_contexts = params.comprehensive ? 'c, cg, ch, hcg, gch' : 'cg'
+        """
+        biscuit vcf2bed -k $min_depth -t $all_contexts  "${vcf[0]}" > "${name}.bedgraph"
+        """
+    }
+
+    if (params.epiread) {
+        if (params.common_dbsnp) {
+            /*
+            * STEP 7.1 - Reformat SNP table for SNP file generation
+            */
+            process reformat_SNP {
+
+                input:
+                file commonSNP_file from ch_commonSNP_for_SNP.collect()
+
+                output:
+                file("reformattedSNP.snv.txt.gz*" ) into ch_reformattedSNP_for_SNP
+
+                script:
+                """
+                less $commonSNP_file | $projectDir/bin/processUcscDbsnp.pl | grep snv | bgzip > reformattedSNP.snv.txt.gz
+                tabix -s 1 -b 2 -e 3 reformattedSNP.snv.txt.gz
+                """
+            }
+        }
+        else {
+            ch_reformattedSNP_for_SNP = Channel.empty()
+        }
+
+
+        /*
+        * STEP 7.2 - Create whitelist for SNP calling
+        */
+        if ( !params.whitelist) {
+            process create_whitelist {
+                tag "$blacklist"
+                publishDir path: "${params.outdir}/reference_genome", saveAs: { params.save_reference ? it : null }, mode: params.publish_dir_mode
+
+                input:
+                file blacklist from ch_blacklist_for_create_whitelist
+                file fasta_index from ch_fasta_for_create_whitelist
+
+                output:
+                file("whitelist.${name}.bed.gz" ) into ch_whitelist_for_SNP, ch_whitelist_for_epiread
+                file "sizes.${name}"
+                script:
+                name = fasta_index.getSimpleName() // - '.fa' - '.fai'
+
+                """
+                cut -f1,2 $fasta_index > sizes.${name}
+                bedtools sort -g sizes.${name} -i $blacklist > ${blacklist.baseName}.sorted.bed
+                bedtools complement -i ${blacklist.baseName}.sorted.bed -g sizes.${name} | grep -v _ | bgzip > whitelist.${name}.bed.gz
+                """
+            }
+        }
+        else {
+            ch_fasta_for_create_whitelist.close()
+        }
+        /*
+        * STEP 7.3 - SNP file generation for the epiread conversion
+        */
+        process get_SNP_file {
+            tag "$name"
+            publishDir "${params.outdir}/epireads/snp", mode: params.publish_dir_mode,
+            saveAs: {filename ->
+                if( filename.indexOf("bed") > 0 && params.save_snp_file && filename != "where_are_my_files.txt") filename
+                else null
+            }
+
+            input:
+            set val(name), file(vcf) from ch_vcf_for_epiread
+            file whitelist_file from ch_whitelist_for_SNP.collect()
+            file reformatted_SNP from ch_reformattedSNP_for_SNP.collect().ifEmpty([])
+
+            output:
+            set val(name), file ("${name}.snp.bed") into ch_snp_for_epiread
+            file "*gz"
+
+            script:
+            whitelist = params.whitelist  ? "-R $whitelist_file" : ''
+            snp_file = (reformatted_SNP.size()>0) ? "-a ${reformatted_SNP[0]}"  : ''
+            """
+            bcftools annotate $whitelist -O z ${snp_file} -h $projectDir/assets/common_dbsnp.hdr -c CHROM,FROM,TO,TYPE,COMMON_SOME,COMMON_ALL,REF_MIN,ALT_MIN,REF_DBSNP,ALT_DBSNP,REF_ALL,ALT_ALL,RSID,MAX_MAF "${vcf[0]}" > "${name}-whitelist-dbSNP.vcf.gz"
+            tabix  -p vcf "${name}-whitelist-dbSNP.vcf.gz"
+            bcftools view -O z -i'ALT!="N" & ALT!="." & ( (COUNT(GT=="0/1")>=1 & COMMON_ALL==1 & MAX_MAF>=0.05) | (COUNT(GT=="0/1" & GQ>=60)>=1) )' "${name}-whitelist-dbSNP.vcf.gz" > "${name}-whitelist-dbSNP-HET60.vcf.gz"
+            tabix -p vcf "${name}-whitelist-dbSNP-HET60.vcf.gz"
+            bcftools query -u -i'GT="0/1" & GQ>=10' --format '%CHROM\t%POS\t%POS\t%REF\t%ALT[\t%GT\t%GQ\t%SP\t%AC\t%AF1]\t%RSID\t%COMMON_ALL\t%MAX_MAF\t%REF_MIN\t%ALT_MIN\n' "${name}-whitelist-dbSNP-HET60.vcf.gz" | awk -v OFS="\t" '{\$2 = \$2 - 1; print}' > "${name}.snp.bed"
+            """
+        }
+
+        /*
+        * STEP 7.4 - Convert bam to epiread file format
+        */
+        process epiread_conversion {
+            tag "$name"
+            publishDir "${params.outdir}/epireads", mode: params.publish_dir_mode,
+			saveAs: {filename ->
+                if( params.debug_epiread && filename != "where_are_my_files.txt") filename
+				else if( filename.indexOf("original") < 0 ) filename
+                else null
+            }
+
+            input:
+            set val(name),
+            file(bam),
+            file(bam_index),
+            file(snp),
+            file(fasta),
+            file(fasta_index),
+            file(whitelist) from ch_bam_sorted_for_epiread
+                .join(ch_bam_index_for_epiread)
+                .join(ch_snp_for_epiread)
+                .combine(ch_fasta_for_epiread)
+                .combine(ch_fasta_index_for_epiread)
+                .combine(ch_whitelist_for_epiread)
+            file (assets) from ch_assets_dir_with_cpg_for_epiread.collect()
+
+            output:
+            file "*${name}.e*.gz*"
+            file "${name}.original.epiread.*"
+
+            script:
+            snp_file = (snp.size()>0) ? "-B " + snp.toString() : ''
+            cpg_file = assets.toString() + "/cpg.bed.gz"
+            debug_merging_epiread = (params.debug_epiread_merging || params.debug_epiread) ? "debug" : ''
+            no_filter_reverse = params.rrbs ? "-p" : ''
+            if (params.single_end) {
+                """
+                bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam
+                samtools index ${name}.bam
+                biscuit epiread -q ${task.cpus} $snp_file $no_filter_reverse $fasta ${name}.bam  |sort --parallel=${task.cpus} -T . -k1,1Vf -k5,5n | bgzip > ${name}.epiread.gz
+                tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
+                """
+            } else {
+                """
+                zcat $cpg_file > cpg.bed
+
+                bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam
+                samtools index ${name}.bam
+                biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n > ${name}.original.epiread
+                less ${name}.original.epiread | $projectDir/bin/epiread_pairedEnd_conversion "cpg.bed" $snp ${name}.epiread $debug_merging_epiread >  ${name}.err
+                sort -k1,1Vf -k 2,2n -k 3,3n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz
+                sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.err | bgzip > ${name}.err.gz
+                sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.original.epiread | bgzip > ${name}.original.epiread.gz
+                tabix -0 -s 1 -b 5 -e 5 ${name}.original.epiread.gz
+                tabix -0 -p bed ${name}.epiread.gz
+                tabix -0 -s 1 -b 5 -e 5 ${name}.err.gz
+                """
+            }
+        }
+    }
+
+    /*
+    * STEP 8 - Running QC of samples
+    */
+    process biscuit_QC {
+        tag "$name"
+        publishDir "${params.outdir}/biscuit_QC", mode: params.publish_dir_mode
+
+        input:
+        set val(name),
+        file(vcf),
+        file(bam),
+        file(fasta),
+        file(fasta_index),
+        file(assets) from ch_vcf_biscuit_qc
+        .join(ch_bam_noDups_for_QC)
+        .combine(ch_fasta_for_biscuitQC)
+        .combine(ch_fasta_index_for_biscuitQC)
+        .combine(ch_assets_dir_for_biscuit_qc)
+
+        output:
+        file "*_biscuitQC" into ch_QC_results_for_multiqc
+
+        script:
+        assembly = fasta.toString().replaceAll(/\.\w+/,"")
+        """
+        QC.sh -v ${vcf[0]} -o ${name}.${assembly}_biscuitQC $assets $fasta ${name}.${assembly} ${bam}
+        """
+    }
+
+} // end of biscuit if block
+else {
+    ch_flagstat_results_biscuit_for_multiqc = Channel.from(false)
+    ch_samtools_stats_results_biscuit_for_multiqc = Channel.from(false)
+    ch_QC_results_for_multiqc = Channel.from(false)
+    ch_samblaster_for_multiqc = Channel.from(false)
+}
+
+/*
+ * STEP 9 - Qualimap
  */
 process qualimap {
     tag "$name"
     publishDir "${params.outdir}/qualimap", mode: params.publish_dir_mode
 
     input:
-    set val(name), file(bam) from ch_bam_dedup_for_qualimap
+    set val(name), file(bam) from ch_bam_sorted_dedup_for_qualimap
 
     output:
     file "${bam.baseName}_qualimap" into ch_qualimap_results_for_multiqc
@@ -886,14 +1414,9 @@ process qualimap {
     script:
     gcref = params.genome.toString().startsWith('GRCh') ? '-gd HUMAN' : ''
     gcref = params.genome.toString().startsWith('GRCm') ? '-gd MOUSE' : ''
-    def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
-    def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
     """
-    samtools sort $bam \\
-        -@ ${task.cpus} $sort_mem \\
-        -o ${bam.baseName}.sorted.bam
     qualimap bamqc $gcref \\
-        -bam ${bam.baseName}.sorted.bam \\
+        -bam ${bam.baseName}.bam \\
         -outdir ${bam.baseName}_qualimap \\
         --collect-overlap-pairs \\
         --java-mem-size=${task.memory.toGiga()}G \\
@@ -901,8 +1424,101 @@ process qualimap {
     """
 }
 
+
+ /*
+ * STEP 10 - Picard - Preparation step
+ */
+process prepare_genome_to_picard {
+    publishDir path: { params.save_reference ? "${params.outdir}/reference_genome" : params.outdir },
+        saveAs: { (params.save_reference && it.indexOf("dict") >0) ? it : null }, mode: params.publish_dir_mode
+
+    input:
+    file fasta from ch_fasta_for_picard
+    output:
+    file "${fasta.baseName}.picard.fa" into ch_fasta_picard_for_picard
+    file "${fasta.baseName}.picard.dict" into ch_fasta_picard_dict_for_picard
+
+    script:
+    if( !task.memory ){
+        log.info "[Picard MarkDuplicates] Available memory not known - defaulting to 3GB. Specify process memory requirements to change this."
+        avail_mem = 3
+    } else {
+        avail_mem = task.memory.toGiga()
+    }
+    """
+    mv ${fasta} ${fasta.baseName}.picard.fa
+    picard -Xmx${avail_mem}g CreateSequenceDictionary \\
+        R=${fasta.baseName}.picard.fa \\
+        O=${fasta.baseName}.picard.dict
+    """
+}
+
+
+
+ /*
+ * STEP 11 - Picard InsertSizeMetrics and GcBiasMetrics
+ */
+process picard_metrics {
+    tag "$name"
+    publishDir "${params.outdir}/picardMetrics", mode: params.publish_dir_mode,
+         saveAs: { filename ->
+                  if (filename.indexOf(".txt") > 0) filename
+                  else if (filename.indexOf(".pdf") > 0) "pdf/$filename"
+                  else null
+            }
+    input:
+    set val(name), file(bam) from ch_bam_sorted_for_picard
+    file fasta from ch_fasta_picard_for_picard.collect()
+    file dict from ch_fasta_picard_dict_for_picard.collect()
+
+    output:
+    file "${name}.*.pdf"
+    file "${name}.*.txt" into ch_picard_results_for_multiqc
+
+    script:
+    if( !task.memory ){
+        log.info "[Picard MarkDuplicates] Available memory not known - defaulting to 3GB. Specify process memory requirements to change this."
+        avail_mem = 3
+    } else {
+        avail_mem = task.memory.toGiga()
+    }
+    """
+    picard -Xmx${avail_mem}g CollectInsertSizeMetrics \\
+        INPUT=$bam \\
+        OUTPUT=${name}.insert_size_metrics.txt \\
+        HISTOGRAM_FILE=${name}.insert_size_histogram.pdf \\
+        ASSUME_SORTED=true \\
+        VALIDATION_STRINGENCY=LENIENT
+    set +e
+    picard -Xmx${avail_mem}g CollectGcBiasMetrics \\
+        INPUT=$bam \\
+        OUTPUT=${name}.gc_bias_metrics.txt \\
+        CHART=${name}.gc_bias_metrics.pdf \\
+        SUMMARY_OUTPUT=${name}.summary_metrics.txt \\
+        ASSUME_SORTED=true \\
+        IS_BISULFITE_SEQUENCED=true \\
+        REFERENCE_SEQUENCE=$fasta \\
+        VALIDATION_STRINGENCY=LENIENT
+    [ ! "\$?" -eq "0" ] && picard -Xmx${avail_mem}g ReorderSam \\
+        I=$bam O=${bam.baseName}.picard.bam \\
+        SEQUENCE_DICTIONARY=$fasta \\
+        VALIDATION_STRINGENCY=LENIENT \\
+        TMP_DIR=. && \\
+            picard -Xmx${avail_mem}g CollectGcBiasMetrics \\
+                INPUT=${bam.baseName}.picard.bam  \\
+                OUTPUT=${name}.gc_bias_metrics.txt \\
+                CHART=${name}.gc_bias_metrics.pdf \\
+                SUMMARY_OUTPUT=${name}.summary_metrics.txt \\
+                ASSUME_SORTED=true \\
+                IS_BISULFITE_SEQUENCED=true \\
+                REFERENCE_SEQUENCE=$fasta \\
+                VALIDATION_STRINGENCY=LENIENT
+    echo "fine"
+    """
+}
+
 /*
- * STEP 9 - preseq
+ * STEP 12 - preseq
  */
 process preseq {
     tag "$name"
@@ -915,18 +1531,14 @@ process preseq {
     file "${bam.baseName}.ccurve.txt" into preseq_results
 
     script:
-    def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
-    def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
     """
-    samtools sort $bam \\
-        -@ ${task.cpus} $sort_mem \\
-        -o ${bam.baseName}.sorted.bam
-    preseq lc_extrap -v -B ${bam.baseName}.sorted.bam -o ${bam.baseName}.ccurve.txt
+    preseq lc_extrap -v -B ${bam.baseName}.bam -o ${bam.baseName}.ccurve.txt
     """
+
 }
 
 /*
- * STEP 10 - MultiQC
+ * STEP 13 - MultiQC
  */
 process multiqc {
     publishDir "${params.outdir}/MultiQC", mode: params.publish_dir_mode
@@ -944,10 +1556,15 @@ process multiqc {
     file ('bismark/*') from ch_bismark_summary_results_for_multiqc.collect().ifEmpty([])
     file ('samtools/*') from ch_flagstat_results_for_multiqc.flatten().collect().ifEmpty([])
     file ('samtools/*') from ch_samtools_stats_results_for_multiqc.flatten().collect().ifEmpty([])
+    file ('samtools/*') from ch_flagstat_results_biscuit_for_multiqc.flatten().collect().ifEmpty([])
+    file ('samtools/*') from ch_samtools_stats_results_biscuit_for_multiqc.flatten().collect().ifEmpty([])
     file ('picard/*') from ch_markDups_results_for_multiqc.flatten().collect().ifEmpty([])
     file ('methyldackel/*') from ch_methyldackel_results_for_multiqc.flatten().collect().ifEmpty([])
     file ('qualimap/*') from ch_qualimap_results_for_multiqc.collect().ifEmpty([])
     file ('preseq/*') from preseq_results.collect().ifEmpty([])
+    file ('biscuit_QC/*') from ch_QC_results_for_multiqc.collect().ifEmpty([])
+    file ('biscuit_markDuplicates/*') from ch_samblaster_for_multiqc.collect().ifEmpty([])
+    file ('picardMetrics/*') from ch_picard_results_for_multiqc.collect().ifEmpty([])
     file ('software_versions/*') from ch_software_versions_yaml_for_multiqc.collect()
     file workflow_summary from ch_workflow_summary.collectFile(name: "workflow_summary_mqc.yaml")
 
@@ -966,12 +1583,12 @@ process multiqc {
     custom_config_file = params.multiqc_config ? "--config $mqc_custom_config" : ''
     """
     multiqc -f $rtitle $rfilename $custom_config_file . \\
-        -m custom_content -m picard -m qualimap -m bismark -m samtools -m preseq -m cutadapt -m fastqc
+        -m custom_content -m picard -m qualimap -m bismark -m samtools -m preseq -m cutadapt -m fastqc -m biscuit -m samblaster
     """
 }
 
 /*
- * STEP 11 - Output Description HTML
+ * STEP 14 - Output Description HTML
  */
 process output_documentation {
     publishDir "${params.outdir}/pipeline_info", mode: params.publish_dir_mode
@@ -993,7 +1610,6 @@ process output_documentation {
  * Completion e-mail notification
  */
 workflow.onComplete {
-
     // Set up the e-mail variables
     def subject = "[nf-core/methylseq] Successful: $workflow.runName"
     if (!workflow.success) {
@@ -1104,7 +1720,6 @@ workflow.onComplete {
         checkHostname()
         log.info "-${c_purple}[nf-core/methylseq]${c_red} Pipeline completed with errors${c_reset}-"
     }
-
 }
 
 workflow.onError {

@@ -1,0 +1,11 @@
+##INFO=<ID=TYPE,Number=1,Type=String,Description="Variation class/type snv">
+##INFO=<ID=COMMON_SOME,Number=1,Type=Integer,Description="1 percent common in some of the population sources in UCSC">
+##INFO=<ID=COMMON_ALL,Number=1,Type=Integer,Description="1 percent common in all of the available population sources in UCSC">
+##INFO=<ID=REF_MIN,Number=.,Type=Character,Description="ref genotype, less ambiguous from dbsnp or other sources">
+##INFO=<ID=ALT_MIN,Number=.,Type=Character,Description="alt genotype, less ambiguous from dbsnp or other sources">
+##INFO=<ID=REF_DBSNP,Number=.,Type=Character,Description="ref genotype, dbSNP">
+##INFO=<ID=ALT_DBSNP,Number=.,Type=Character,Description="alt genotype, dbSNP">
+##INFO=<ID=REF_ALL,Number=.,Type=Character,Description="ref genotype, other sources">
+##INFO=<ID=ALT_ALL,Number=.,Type=Character,Description="alt genotype, other sources">
+##INFO=<ID=MAX_MAF,Number=.,Type=Float,Description="maximum minor allele frequency among all sources">
+##INFO=<ID=RSID,Number=1,Type=String,Description="dbsnp ID">

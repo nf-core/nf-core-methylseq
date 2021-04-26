@@ -20,10 +20,20 @@ regexes = {
     'BWA': ['v_bwa.txt', r"Version: (\S+)"],
     'bwa-meth': ['v_bwameth.txt', r"bwa-meth\.py (\S+)"],
     'Picard MarkDuplicates': ['v_picard_markdups.txt', r"([\d\.]+)"],
+    'Picard CreateSequenceDictionary': ['v_picard_createseqdict.txt', r"([\d\.]+)"],
+    'Picard CollectInsertSizeMetrics': ['v_picard_collectinssize.txt', r"([\d\.]+)"],
+    'Picard CollectGcBiasMetrics': ['v_picard_collectgcbias.txt', r"([\d\.]+)"],
+    'samblaster': ['v_samblaster.txt', r"samblaster: Version (\S+)"],
+    'biscuit': ['v_biscuit.txt', r"Version: (\S+)"],
+    'bcftools': ['v_bcftools.txt', r"bcftools (\S+)"],
+    'bedtools': ['v_bedtools.txt', r"bedtools (\S+)"],
+    'parallel': ['v_parallel.txt', r"GNU parallel (\S+)"],
+    'gawk': ['v_gawk.txt', r"GNU Awk (\S+)"],
     'MethylDackel': ['v_methyldackel.txt', r"(.+)"],
     'Qualimap': ['v_qualimap.txt', r"QualiMap v.(\S+)"],
     'Preseq': ['v_preseq.txt', r"Version: (\S+)"],
     'MultiQC': ['v_multiqc.txt', r"multiqc, version (\S+)"],
+    
 }
 results = OrderedDict()
 results['nf-core/methylseq'] = '<span style="color:#999999;\">N/A</span>'
@@ -45,6 +55,17 @@ results['MethylDackel'] = '<span style="color:#999999;\">N/A</span>'
 results['Qualimap'] = '<span style="color:#999999;\">N/A</span>'
 results['Preseq'] = '<span style="color:#999999;\">N/A</span>'
 results['MultiQC'] = '<span style="color:#999999;\">N/A</span>'
+results['samblaster'] = '<span style="color:#999999;\">N/A</span>'
+results['biscuit'] = '<span style="color:#999999;\">N/A</span>'
+results['fastasort'] = '<span style="color:#999999;\">N/A</span>'
+results['Picard CreateSequenceDictionary'] = '<span style="color:#999999;\">N/A</span>'
+results['Picard CollectInsertSizeMetrics'] = '<span style="color:#999999;\">N/A</span>'
+results['Picard CollectGcBiasMetrics'] = '<span style="color:#999999;\">N/A</span>'
+results['bcftools'] = '<span style="color:#999999;\">N/A</span>'
+results['bedtools'] = '<span style="color:#999999;\">N/A</span>'
+results['gawk'] = '<span style="color:#999999;\">N/A</span>'
+results['parallel'] = '<span style="color:#999999;\">N/A</span>'
+
 
 # Search each file using its regex
 for k, v in regexes.items():
@@ -63,6 +84,7 @@ for k in list(results):
         del results[k]
 
 # Dump to YAML
+
 print(
     """
 id: 'software_versions'

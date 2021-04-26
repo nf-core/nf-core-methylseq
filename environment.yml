@@ -26,3 +26,10 @@ dependencies:
   - bioconda::picard=2.25.1
   - bioconda::bwameth=0.2.2
   - bioconda::methyldackel=0.5.2
+  # BISCUIT pipeline
+  - bioconda::samblaster=0.1.26
+  - bioconda::bedtools=2.30.0
+  - bioconda::biscuit=0.3.16.20200420
+  - bioconda::bcftools=1.9
+  - conda-forge::parallel=20201122
+  - gawk=5.1.0
