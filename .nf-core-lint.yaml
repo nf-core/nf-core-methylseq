@@ -1,0 +1,6 @@
+# FIXME - remove after DSL2 template is released in tools
+actions_awsfulltest: False
+# FIXME - CI currently runs for dev and dsl2 branches, remove the latter before merging to dev
+actions_ci: False
+files_exist:
+  - bin/markdown_to_html.py
